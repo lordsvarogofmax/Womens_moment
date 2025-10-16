@@ -14,3 +14,4 @@ def build_router() -> Router:
 		)
 
 	return router
+

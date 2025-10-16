@@ -57,3 +57,4 @@ def build_router() -> Router:
 		await state.set_state(OutfitFlow.result)
 
 	return router
+

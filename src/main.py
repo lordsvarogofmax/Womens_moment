@@ -11,9 +11,19 @@ from src.bot.routers.profile import build_router as build_profile_router
 from src.bot.routers.outfit import build_router as build_outfit_router
 
 
-async def main() -> None:
-	logging.basicConfig(level=logging.INFO)
+async def run() -> None:
 	config = load_config()
+	logging.basicConfig(
+		level=getattr(logging, config.log_level.upper(), logging.INFO),
+		format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
+	)
+	logging.info(
+		"Starting polling bot | locale=%s tz=%s openrouter_enabled=%s weather_enabled=%s",
+		config.default_locale,
+		config.timezone,
+		bool(config.openrouter_api_key),
+		bool(config.openweather_api_key),
+	)
 
 	if not config.bot_token:
 		raise RuntimeError("TELEGRAM_BOT_TOKEN is not set in environment")
@@ -25,10 +35,19 @@ async def main() -> None:
 	dp.include_router(build_start_router())
 	dp.include_router(build_profile_router())
 	dp.include_router(build_outfit_router())
+	logging.info("Routers registered: start, profile, outfit")
 
 	await bot.delete_webhook(drop_pending_updates=True)
 	await dp.start_polling(bot)
 
 
+def main() -> None:
+	try:
+		asyncio.run(run())
+	except Exception:
+		logging.exception("Fatal error while running polling bot")
+		raise
+
+
 if __name__ == "__main__":
-	asyncio.run(main())
+	main()

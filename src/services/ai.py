@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import httpx
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -17,6 +21,7 @@ class OpenRouterClient:
 
 	async def chat(self, system_prompt: str, user_prompt: str) -> AIResponse | None:
 		if not self.api_key:
+			logger.warning("OpenRouter API key is not set; skipping AI call")
 			return None
 		headers = {
 			"Authorization": f"Bearer {self.api_key}",
@@ -31,9 +36,15 @@ class OpenRouterClient:
 				{"role": "user", "content": user_prompt},
 			],
 		}
-		async with httpx.AsyncClient(timeout=30) as client:
-			resp = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
-			resp.raise_for_status()
-			data = resp.json()
-			text = data["choices"][0]["message"]["content"].strip()
-			return AIResponse(text=text)
+		try:
+			async with httpx.AsyncClient(timeout=30) as client:
+				resp = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+				resp.raise_for_status()
+				data = resp.json()
+				text = data["choices"][0]["message"]["content"].strip()
+				logger.info("AI response received (len=%d)", len(text))
+				return AIResponse(text=text)
+		except httpx.HTTPError:
+			logger.exception("OpenRouter call failed")
+			return None
+

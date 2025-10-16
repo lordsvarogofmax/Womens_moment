@@ -19,3 +19,4 @@ class OutfitFlow(StatesGroup):
 	destination = State()
 	mood = State()
 	result = State()
+
