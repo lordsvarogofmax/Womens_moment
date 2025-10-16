@@ -14,10 +14,12 @@ class AIResponse:
 
 
 class OpenRouterClient:
-	def __init__(self, base_url: str, api_key: str | None, model: str) -> None:
+	def __init__(self, base_url: str, api_key: str | None, model: str, *, referer: str | None = None, title: str = "Womens Moment TG Bot") -> None:
 		self.base_url = base_url.rstrip("/")
 		self.api_key = api_key
 		self.model = model
+		self.referer = referer
+		self.title = title
 
 	async def chat(self, system_prompt: str, user_prompt: str) -> AIResponse | None:
 		if not self.api_key:
@@ -26,9 +28,10 @@ class OpenRouterClient:
 		headers = {
 			"Authorization": f"Bearer {self.api_key}",
 			"Content-Type": "application/json",
-			"HTTP-Referer": "https://happy-girls.onrender.com",
-			"X-Title": "Womens Moment TG Bot",
 		}
+		if self.referer:
+			headers["HTTP-Referer"] = self.referer
+		headers["X-Title"] = self.title
 		payload = {
 			"model": self.model,
 			"messages": [

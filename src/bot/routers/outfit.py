@@ -46,7 +46,13 @@ def build_router() -> Router:
 			"Используйте структуру: Верх, Низ, Обувь, Верхняя одежда (если нужно), Украшения, Макияж. "
 			"Коротко и по делу (5-8 пунктов)."
 		)
-		client = OpenRouterClient(config.openrouter_base_url, config.openrouter_api_key, config.openrouter_model)
+		client = OpenRouterClient(
+			config.openrouter_base_url,
+			config.openrouter_api_key,
+			config.openrouter_model,
+			referer=config.openrouter_referer,
+			title=config.openrouter_title,
+		)
 		ai_resp = await client.chat(
 			system_prompt="Ты внимательный и тактичный женский стилист-консультант.",
 			user_prompt=user_prompt,
