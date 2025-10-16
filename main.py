@@ -20,9 +20,24 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 DB_PATH = os.getenv("DB_PATH", "bot.db")
 
-if not BOT_TOKEN or not WEBHOOK_URL:
-    logger.critical("❌ BOT_TOKEN or WEBHOOK_URL not set!")
-    sys.exit(1)
+# Better error handling for missing environment variables
+def check_env_vars():
+    missing_vars = []
+    if not BOT_TOKEN:
+        missing_vars.append("BOT_TOKEN")
+    if not WEBHOOK_URL:
+        missing_vars.append("WEBHOOK_URL")
+    
+    if missing_vars:
+        logger.critical(f"❌ Missing required environment variables: {', '.join(missing_vars)}")
+        logger.critical("Please set the following environment variables in your Render dashboard:")
+        logger.critical("1. BOT_TOKEN - Get from @BotFather on Telegram")
+        logger.critical("2. WEBHOOK_URL - Your Render app URL + /webhook (e.g., https://your-app.onrender.com/webhook)")
+        sys.exit(1)
+    
+    logger.info("✅ Environment variables loaded successfully")
+
+check_env_vars()
 
 app = Flask(__name__)
 
@@ -463,8 +478,16 @@ def outfit_recommendation(traits, wardrobe_items, weather, destination_code, moo
     return f"Рекомендация: {items_text}."
 
 
-# --- Webhook ---
+# --- Health check ---
+@app.route("/", methods=["GET"])
+def health_check():
+    return "Wardrobe Bot is running! 🌸", 200
 
+@app.route("/health", methods=["GET"])
+def health():
+    return {"status": "ok", "bot": "wardrobe-consultant"}, 200
+
+# --- Webhook ---
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
     try:
@@ -590,7 +613,30 @@ def set_webhook():
 
 if __name__ == "__main__":
     logger.info("🚀 Запуск гардероб-бота...")
-    init_db()
-    set_webhook()
+    
+    # Initialize database
+    try:
+        init_db()
+        logger.info("✅ База данных инициализирована")
+    except Exception as e:
+        logger.error(f"❌ Ошибка инициализации БД: {e}")
+        sys.exit(1)
+    
+    # Set webhook
+    try:
+        set_webhook()
+    except Exception as e:
+        logger.error(f"❌ Ошибка установки webhook: {e}")
+        # Don't exit, continue without webhook for testing
+    
+    # Get port from environment (Render sets this)
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    logger.info(f"🌐 Запуск сервера на порту {port}")
+    
+    # Run Flask app
+    app.run(
+        host="0.0.0.0",  # Important for Docker
+        port=port,
+        debug=False,  # Disable debug in production
+        threaded=True  # Enable threading for better performance
+    )
