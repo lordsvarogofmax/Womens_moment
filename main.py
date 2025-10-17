@@ -34,8 +34,8 @@ def check_env_vars():
         logger.critical("Please set the following environment variables in your Render dashboard:")
         logger.critical("1. BOT_TOKEN - Get from @BotFather on Telegram")
         logger.critical("2. WEBHOOK_URL - Your Render app URL + /webhook (e.g., https://your-app.onrender.com/webhook)")
-    sys.exit(1)
-
+        sys.exit(1)
+    
     logger.info("✅ Environment variables loaded successfully")
 
 check_env_vars()
