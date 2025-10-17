@@ -209,6 +209,38 @@ def detect_gender_by_name(name):
     else:
         return "unknown"
 
+def extract_name_from_text(text):
+    """Извлекает имя из развернутого сообщения"""
+    # Убираем лишние пробелы и приводим к нижнему регистру для анализа
+    text_clean = re.sub(r'\s+', ' ', text.strip())
+    
+    # Паттерны для поиска имени
+    patterns = [
+        r'меня зовут\s+(\w+)',
+        r'я\s+(\w+)',
+        r'зовите меня\s+(\w+)',
+        r'мое имя\s+(\w+)',
+        r'имя\s+(\w+)',
+        r'^(\w+)\s',  # Первое слово
+        r'(\w+)$'     # Последнее слово
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_clean, re.IGNORECASE)
+        if match:
+            name = match.group(1).strip()
+            # Проверяем, что это не служебное слово
+            if len(name) >= 2 and name.lower() not in ['меня', 'зовут', 'мое', 'имя', 'это', 'вот', 'так', 'да', 'нет']:
+                return name.capitalize()
+    
+    # Если ничего не найдено, берем первое слово длиннее 2 символов
+    words = text_clean.split()
+    for word in words:
+        if len(word) >= 2 and word.isalpha():
+            return word.capitalize()
+    
+    return None
+
 def detect_gender_correction(text):
     """Определяет поправку пола из текста"""
     text = text.lower()
@@ -299,6 +331,56 @@ def bati_no_ingredients(name, gender):
 def bati_recipe_found(name, gender, count):
     pronouns = get_gender_pronoun(gender)
     return f"Ебать, {name}, {pronouns['address']}! Из твоих продуктов я могу приготовить {count} блюд! Смотри, что у меня получилось:"
+
+def handle_any_message(chat_id, user_id, text, session):
+    """Обрабатывает любые сообщения пользователя в зависимости от контекста"""
+    name = session['data'].get('name', 'детка')
+    gender = session['data'].get('gender', 'unknown')
+    pronouns = get_gender_pronoun(gender)
+    stage = session['stage']
+    
+    text_lower = text.lower().strip()
+    
+    # Обработка вопросов о готовке
+    if any(word in text_lower for word in ['как готовить', 'как приготовить', 'что делать', 'помоги', 'объясни']):
+        if stage == 'ask_ingredients':
+            send_message(chat_id, f"Слушай, {name}, {pronouns['address']}, сначала скажи, что у тебя есть в холодильнике! А потом я покажу, как готовить! 👨‍🍳")
+        elif stage == 'show_recipes':
+            send_message(chat_id, f"Выбери рецепт из списка, {name}, {pronouns['address']}! Нажми на кнопку с блюдом! 😋")
+        elif stage == 'cooking':
+            send_message(chat_id, f"Следуй моим инструкциям, {name}, {pronouns['address']}! Напиши 'далее' для следующего шага! 🔥")
+        else:
+            send_message(chat_id, f"Напиши /start, чтобы начать готовить, {name}, {pronouns['address']}! 🚀")
+        return True
+    
+    # Обработка просьб о помощи
+    if any(word in text_lower for word in ['помоги', 'не понимаю', 'не знаю', 'что делать', 'как']):
+        if stage == 'ask_name':
+            send_message(chat_id, "Просто напиши свое имя, детка! Например: 'Меня зовут Анна' или просто 'Анна'! 😊")
+        elif stage == 'ask_ingredients':
+            send_message(chat_id, f"Скажи, что у тебя есть дома, {name}, {pronouns['address']}! Например: 'У меня есть картошка, мясо, лук'! 🥔")
+        elif stage == 'show_recipes':
+            send_message(chat_id, f"Выбери рецепт из списка выше, {name}, {pronouns['address']}! Нажми на кнопку! 👆")
+        elif stage == 'cooking':
+            send_message(chat_id, f"Следуй инструкциям, {name}, {pronouns['address']}! Напиши 'далее' для продолжения! 👨‍🍳")
+        return True
+    
+    # Обработка благодарностей
+    if any(word in text_lower for word in ['спасибо', 'благодарю', 'отлично', 'круто', 'классно', 'супер']):
+        send_message(chat_id, f"Пожалуйста, {name}, {pronouns['address']}! Ебать, какой ты вежливый! Рад помочь! 😊")
+        return True
+    
+    # Обработка жалоб и проблем
+    if any(word in text_lower for word in ['не работает', 'ошибка', 'проблема', 'не получается', 'сломалось']):
+        send_message(chat_id, f"Слушай, {name}, {pronouns['address']}, не паникуй! Напиши /start и начнем сначала! Я тебе помогу! 💪")
+        return True
+    
+    # Обработка вопросов о бате
+    if any(word in text_lower for word in ['кто ты', 'что ты', 'как дела', 'как поживаешь']):
+        send_message(chat_id, f"Я твой кулинарный наставник, {name}, {pronouns['address']}! Русский батя из 90-х, который научит тебя готовить! Ебать, какая у меня кухня! 👨‍🍳")
+        return True
+    
+    return False
 
 # --- Recipe database ---
 RECIPES = {
@@ -660,8 +742,9 @@ def telegram_webhook():
             # Обработка имени
             session = get_session(user_id)
             if session and session['stage'] == 'ask_name':
-                name = text.strip()
-                if len(name) < 2:
+                # Извлекаем имя из развернутого сообщения
+                name = extract_name_from_text(text)
+                if not name or len(name) < 2:
                     send_message(chat_id, "Блять, да нормальное имя скажи! Не меньше двух букв! 😤")
                     return "OK", 200
                 
@@ -726,8 +809,13 @@ def telegram_webhook():
                     send_message(chat_id, "Пожалуйста! Ебать, какой ты вежливый! Рад помочь! 😊")
                 return "OK", 200
 
-            # Если ничего не подошло
+            # Пытаемся обработать любое сообщение
             session = get_session(user_id)
+            if session:
+                if handle_any_message(chat_id, user_id, text, session):
+                    return "OK", 200
+            
+            # Если ничего не подошло
             if session and session['data'].get('name'):
                 name = session['data']['name']
                 gender = session['data'].get('gender', 'unknown')
