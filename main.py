@@ -4,6 +4,7 @@ import logging
 import json
 import time
 import hashlib
+import re
 from datetime import datetime
 import sqlite3
 import requests
@@ -33,8 +34,8 @@ def check_env_vars():
         logger.critical("Please set the following environment variables in your Render dashboard:")
         logger.critical("1. BOT_TOKEN - Get from @BotFather on Telegram")
         logger.critical("2. WEBHOOK_URL - Your Render app URL + /webhook (e.g., https://your-app.onrender.com/webhook)")
-        sys.exit(1)
-    
+    sys.exit(1)
+
     logger.info("✅ Environment variables loaded successfully")
 
 check_env_vars()
@@ -45,12 +46,11 @@ app = Flask(__name__)
 processed_messages = set()
 processed_callback_ids = set()
 
-# --- DB helpers ---
+# --- Database helpers ---
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
-
 
 def init_db():
     try:
@@ -62,38 +62,15 @@ def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
                 username TEXT,
+                gender TEXT,
                 created_at TEXT NOT NULL
             )
             """
         )
-        # psychological profiles
+        # cooking sessions
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS profiles (
-                user_id TEXT PRIMARY KEY,
-                traits_json TEXT NOT NULL,
-                completed_at TEXT NOT NULL
-            )
-            """
-        )
-        # wardrobe
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS wardrobe_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                category TEXT NOT NULL,
-                item_name TEXT NOT NULL,
-                color TEXT,
-                style TEXT,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        # sessions
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sessions (
+            CREATE TABLE IF NOT EXISTS cooking_sessions (
                 user_id TEXT PRIMARY KEY,
                 stage TEXT NOT NULL,
                 data_json TEXT,
@@ -106,70 +83,37 @@ def init_db():
     except Exception:
         logger.exception("💥 Ошибка инициализации БД")
 
-
-def upsert_user(user_id, username):
+def upsert_user(user_id, username, gender=None):
     try:
         conn = get_db()
         cur = conn.cursor()
-        cur.execute(
-            "INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)",
-            (str(user_id), username, datetime.utcnow().isoformat())
-        )
+        if gender:
+            cur.execute(
+                "INSERT OR REPLACE INTO users (user_id, username, gender, created_at) VALUES (?, ?, ?, ?)",
+                (str(user_id), username, gender, datetime.utcnow().isoformat())
+            )
+        else:
+            cur.execute(
+                "INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)",
+                (str(user_id), username, datetime.utcnow().isoformat())
+            )
         conn.commit()
         conn.close()
     except Exception:
         logger.exception("💥 Ошибка записи пользователя")
 
-
-def get_profile(user_id):
+def get_user(user_id):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT traits_json FROM profiles WHERE user_id=?", (str(user_id),))
+    cur.execute("SELECT username, gender FROM users WHERE user_id=?", (str(user_id),))
     row = cur.fetchone()
     conn.close()
-    return json.loads(row[0]) if row else None
-
-
-def save_profile(user_id, traits):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        "REPLACE INTO profiles (user_id, traits_json, completed_at) VALUES (?, ?, ?)",
-        (str(user_id), json.dumps(traits, ensure_ascii=False), datetime.utcnow().isoformat())
-    )
-    conn.commit()
-    conn.close()
-
-
-def add_wardrobe_items(user_id, category, items):
-    conn = get_db()
-    cur = conn.cursor()
-    now = datetime.utcnow().isoformat()
-    for item in items:
-        cur.execute(
-            "INSERT INTO wardrobe_items (user_id, category, item_name, color, style, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (str(user_id), category, item.get("name"), item.get("color"), item.get("style"), now)
-        )
-    conn.commit()
-    conn.close()
-
-
-def get_wardrobe(user_id):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT category, item_name, color, style FROM wardrobe_items WHERE user_id=?", (str(user_id),))
-    rows = cur.fetchall()
-    conn.close()
-    items = []
-    for r in rows:
-        items.append({"category": r[0], "name": r[1], "color": r[2], "style": r[3]})
-    return items
-
+    return dict(row) if row else None
 
 def get_session(user_id):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT stage, data_json FROM sessions WHERE user_id=?", (str(user_id),))
+    cur.execute("SELECT stage, data_json FROM cooking_sessions WHERE user_id=?", (str(user_id),))
     row = cur.fetchone()
     conn.close()
     if not row:
@@ -177,39 +121,17 @@ def get_session(user_id):
     stage, data_json = row
     return {"stage": stage, "data": json.loads(data_json) if data_json else {}}
 
-
 def save_session(user_id, stage, data):
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "REPLACE INTO sessions (user_id, stage, data_json, updated_at) VALUES (?, ?, ?, ?)",
+        "REPLACE INTO cooking_sessions (user_id, stage, data_json, updated_at) VALUES (?, ?, ?, ?)",
         (str(user_id), stage, json.dumps(data, ensure_ascii=False), datetime.utcnow().isoformat())
     )
     conn.commit()
     conn.close()
 
-
 # --- UI helpers ---
-
-def main_keyboard():
-    return {
-        "keyboard": [[
-            {"text": "🧠 Пройти опрос профиля"},
-            {"text": "👗 Заполнить гардероб"}
-        ], [
-            {"text": "🌤️ Что сегодня надеть?"}
-        ]],
-        "resize_keyboard": True,
-        "one_time_keyboard": False
-    }
-
-
-WELCOME = (
-    "Привет! Я помогу подобрать образ на сегодня исходя из погоды, настроения, гардероба и целей.\n\n"
-    "Начните с заполнения профиля и гардероба или сразу нажмите ‘🌤️ Что сегодня надеть?’"
-)
-
-
 def send_message(chat_id, text, reply_markup=None):
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -219,7 +141,6 @@ def send_message(chat_id, text, reply_markup=None):
         requests.post(url, json=data, timeout=10)
     except Exception:
         logger.exception("Ошибка отправки сообщения")
-
 
 def answer_callback_query(callback_query_id, text=None):
     try:
@@ -231,261 +152,417 @@ def answer_callback_query(callback_query_id, text=None):
     except Exception:
         logger.exception("Ошибка answerCallbackQuery")
 
-
 def get_message_hash(message):
     s = str(message.get('message_id', '')) + str(message.get('date', ''))
     return hashlib.md5(s.encode()).hexdigest()
-
 
 def build_inline_keyboard(options_with_payload):
     # options_with_payload: [(text, payload), ...]
     row = [{"text": t, "callback_data": p} for t, p in options_with_payload]
     return {"inline_keyboard": [row]}
 
-
-# --- Weather ---
-
-def geocode_city(city_name):
-    try:
-        resp = requests.get(
-            "https://geocoding-api.open-meteo.com/v1/search",
-            params={"name": city_name, "count": 1, "language": "ru", "format": "json"},
-            timeout=10,
-        )
-        if not resp.ok:
-            return None
-        data = resp.json()
-        if not data.get("results"):
-            return None
-        r = data["results"][0]
-        return {"lat": r["latitude"], "lon": r["longitude"], "name": r.get("name")}
-    except Exception:
-        logger.exception("Геокодинг ошибка")
-        return None
-
-
-def get_current_weather(lat, lon):
-    try:
-        resp = requests.get(
-            "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": lat,
-                "longitude": lon,
-                "current": "temperature_2m,precipitation,wind_speed_10m",
-                "forecast_days": 1,
-                "timezone": "auto",
-            },
-            timeout=10,
-        )
-        if not resp.ok:
-            return None
-        data = resp.json()
-        cur = data.get("current") or {}
-        return {
-            "temperature": cur.get("temperature_2m"),
-            "precipitation": cur.get("precipitation"),
-            "wind": cur.get("wind_speed_10m"),
-        }
-    except Exception:
-        logger.exception("Ошибка погоды")
-        return None
-
-
-def pretty_weather(w):
-    if not w:
-        return "(нет данных)"
-    return f"Температура: {w['temperature']}°C, Осадки: {w['precipitation']} мм, Ветер: {w['wind']} м/с"
-
-
-# --- Conversations ---
-
-PSYCH_QUESTIONS = [
-    ("psych_q1", "Как вы обычно относитесь к ярким образам?", ["Люблю выделяться", "Предпочитаю сдержанность", "Ситуативно"]),
-    ("psych_q2", "Что для вас важнее?", ["Комфорт", "Стиль", "Баланс"]),
-    ("psych_q3", "Как описали бы свой характер?", ["Спокойная", "Энергичная", "Романтичная", "Дерзкая"]),
-]
-
-DESTINATION_OPTIONS = [
-    ("Работа/Учёба", "dest_work"),
-    ("Свидание", "dest_date"),
-    ("Вечеринка", "dest_party"),
-    ("Прогулка", "dest_walk"),
-    ("Спорт", "dest_sport"),
-    ("Домашние дела", "dest_home"),
-]
-
-MOOD_OPTIONS = [
-    ("Спокойное", "mood_calm"),
-    ("Энергичное", "mood_energetic"),
-    ("Романтичное", "mood_romantic"),
-    ("Дерзкое", "mood_bold"),
-    ("Уютное", "mood_cozy"),
-]
-
-WARDROBE_CATEGORIES = [
-    ("Базовые вещи", "base"),
-    ("Верх", "top"),
-    ("Низ", "bottom"),
-    ("Обувь", "shoes"),
-    ("Верхняя одежда", "outerwear"),
-    ("Украшения", "accessories"),
-]
-
-
-def ask_psych_question(chat_id, idx, current):
-    key, text, options = PSYCH_QUESTIONS[idx]
-    keyboard = {"inline_keyboard": [[{"text": opt, "callback_data": f"psych|{key}|{opt}"} for opt in options]]}
-    send_message(chat_id, f"{idx+1}/{len(PSYCH_QUESTIONS)}. {text}", reply_markup=keyboard)
-
-
-def start_psych_flow(chat_id, user_id):
-    save_session(user_id, "psych_q1", {"answers": {}})
-    ask_psych_question(chat_id, 0, {})
-
-
-def continue_psych_flow(chat_id, user_id, payload_key, payload_value):
-    sess = get_session(user_id) or {"stage": "psych_q1", "data": {"answers": {}}}
-    answers = sess["data"].get("answers", {})
-    answers[payload_key] = payload_value
-    idx = [k for k, *_ in PSYCH_QUESTIONS].index(payload_key)
-    next_idx = idx + 1
-    if next_idx < len(PSYCH_QUESTIONS):
-        save_session(user_id, PSYCH_QUESTIONS[next_idx][0], {"answers": answers})
-        ask_psych_question(chat_id, next_idx, answers)
+# --- Bati personality ---
+def get_gender_pronoun(gender):
+    if gender == "male":
+        return {"you": "сынок", "your": "твой", "you_have": "у тебя", "you_are": "ты", "address": "сынок"}
+    elif gender == "female":
+        return {"you": "дочка", "your": "твоя", "you_have": "у тебя", "you_are": "ты", "address": "дочка"}
     else:
-        save_profile(user_id, answers)
-        save_session(user_id, "idle", {})
-        send_message(chat_id, "✅ Профиль сохранён!")
-        send_message(chat_id, "Теперь заполним гардероб.", reply_markup=main_keyboard())
+        return {"you": "детка", "your": "твой", "you_have": "у тебя", "you_are": "ты", "address": "детка"}
 
-
-def parse_items_line(line):
-    items = []
-    for part in [p.strip() for p in line.split(";") if p.strip()]:
-        items.append({"name": part, "color": None, "style": None})
-    return items
-
-
-def start_wardrobe_flow(chat_id, user_id):
-    save_session(user_id, "wardrobe_cat_0", {"wardrobe": {}})
-    send_message(chat_id, "Заполним гардероб. Перечислите через ‘;’ что у вас есть в категории ‘Базовые вещи’.\nНапример: белая футболка; чёрный свитшот; бежевый лонгслив")
-
-
-def continue_wardrobe_flow(chat_id, user_id, text):
-    sess = get_session(user_id)
-    if not sess:
-        start_wardrobe_flow(chat_id, user_id)
-        return
-    stage = sess["stage"]
-    data = sess["data"]
-    if not stage.startswith("wardrobe_cat_"):
-        start_wardrobe_flow(chat_id, user_id)
-        return
-    idx = int(stage.split("_")[-1])
-    ru_name, code = WARDROBE_CATEGORIES[idx]
-    items = parse_items_line(text)
-    if items:
-        add_wardrobe_items(user_id, code, items)
-    next_idx = idx + 1
-    if next_idx < len(WARDROBE_CATEGORIES):
-        save_session(user_id, f"wardrobe_cat_{next_idx}", data)
-        next_ru, _ = WARDROBE_CATEGORIES[next_idx]
-        send_message(chat_id, f"Категория: {next_ru}. Перечислите через ‘;’.")
+def detect_gender_by_name(name):
+    """Определяет пол по имени (простая эвристика)"""
+    name = name.lower().strip()
+    
+    # Мужские имена
+    male_names = [
+        'александр', 'алексей', 'андрей', 'антон', 'артем', 'борис', 'вадим', 'валентин', 'валерий', 'василий',
+        'виктор', 'владимир', 'владислав', 'владилен', 'геннадий', 'георгий', 'григорий', 'дмитрий', 'евгений',
+        'егор', 'иван', 'игорь', 'кирилл', 'константин', 'максим', 'михаил', 'николай', 'олег', 'павел',
+        'петр', 'роман', 'сергей', 'станислав', 'степан', 'федор', 'юрий', 'ярослав', 'денис', 'илья',
+        'артур', 'эдуард', 'леонид', 'мирон', 'марк', 'тимофей', 'матвей', 'даниил', 'захар', 'семен',
+        'саша', 'леша', 'андрюха', 'дима', 'миша', 'коля', 'паша', 'рома', 'серый', 'ваня', 'игорь',
+        'жора', 'гоша', 'вася', 'петя', 'федя', 'юра', 'леша', 'леха', 'саня', 'санёк'
+    ]
+    
+    # Женские имена
+    female_names = [
+        'александра', 'алена', 'анастасия', 'анна', 'валентина', 'валерия', 'вера', 'галина', 'дарья', 'елена',
+        'екатерина', 'елена', 'жанна', 'зоя', 'ирина', 'кристина', 'лариса', 'людмила', 'мария', 'надежда',
+        'наталья', 'оксана', 'ольга', 'полина', 'светлана', 'софья', 'татьяна', 'юлия', 'яна', 'виктория',
+        'екатерина', 'марина', 'наташа', 'катя', 'лена', 'оля', 'таня', 'света', 'ира', 'галя', 'валя',
+        'люда', 'надя', 'зоя', 'вера', 'жанна', 'кристина', 'даша', 'полина', 'софья', 'яна', 'вика',
+        'маша', 'настя', 'катя', 'катюша', 'ленка', 'оленька', 'танечка', 'светка', 'ирочка', 'галочка'
+    ]
+    
+    if name in male_names:
+        return "male"
+    elif name in female_names:
+        return "female"
     else:
-        save_session(user_id, "idle", {})
-        send_message(chat_id, "✅ Гардероб сохранён!", reply_markup=main_keyboard())
+        return "unknown"
 
+def detect_gender_correction(text):
+    """Определяет поправку пола из текста"""
+    text = text.lower()
+    
+    male_corrections = ['мальчик', 'мужчина', 'юноша', 'пацан', 'сын', 'сынок', 'я мальчик', 'я мужчина', 'я парень']
+    female_corrections = ['девочка', 'девушка', 'женщина', 'девчонка', 'дочь', 'дочка', 'я девочка', 'я девушка', 'я женщина']
+    
+    for correction in male_corrections:
+        if correction in text:
+            return "male"
+    
+    for correction in female_corrections:
+        if correction in text:
+            return "female"
+    
+    return None
 
-def start_style_today_flow(chat_id, user_id):
-    save_session(user_id, "ask_city", {"flow": "style_today"})
-    send_message(chat_id, "Введите ваш город для определения погоды (например: Москва)")
+def bati_name_ask():
+    """Батю спрашивает имя"""
+    greetings = [
+        "Блять, кто это тут у меня? Назови свое имя, а то я не знаю, как к тебе обращаться! 😤",
+        "Слушай, детка, как тебя зовут? Я должен знать, с кем имею дело на кухне! 👨‍🍳",
+        "Ну что, незнакомец, представься! Как тебя родители назвали? 🤔",
+        "Блять, да кто ты такой? Имя скажи, а то я не буду с анонимом готовить! 😠"
+    ]
+    return greetings[0]
 
+def bati_greeting(name, gender):
+    pronouns = get_gender_pronoun(gender)
+    greetings = [
+        f"А, {name}! Ну что, {pronouns['address']}, готов(а) к кулинарным подвигам? Я тебе сейчас такое блюдо покажу, что ебать! 🔥",
+        f"Так, {name}, {pronouns['address']} мой! Сегодня будем готовить по-настоящему, как в ресторане! 👨‍🍳",
+        f"Слушай, {name}, {pronouns['address']}, я тебе сейчас такое блюдо покажу, что пальчики оближешь! Ебать, какая вкуснятина будет! 😋",
+        f"Ну что, {name}, {pronouns['address']}, добро пожаловать в мою кухню! Сегодня будем творить кулинарные шедевры! 🍳"
+    ]
+    return greetings[0]
 
-def outfit_recommendation(traits, wardrobe_items, weather, destination_code, mood_code):
-    temperature = (weather or {}).get("temperature")
-    precip = (weather or {}).get("precipitation") or 0
-    wind = (weather or {}).get("wind") or 0
+def bati_gender_correction(name, old_gender, new_gender):
+    """Батю корректирует пол"""
+    old_pronouns = get_gender_pronoun(old_gender)
+    new_pronouns = get_gender_pronoun(new_gender)
+    
+    corrections = [
+        f"А, блять, {name}! Извини, {old_pronouns['address']}, я думал ты {old_pronouns['address']}, а ты {new_pronouns['address']}! Ну ладно, {new_pronouns['address']}, продолжаем! 😅",
+        f"Ебать, {name}, я ошибся! Ты же {new_pronouns['address']}, а не {old_pronouns['address']}! Ну ладно, {new_pronouns['address']}, давай готовить! 🤦‍♂️",
+        f"Слушай, {name}, я перепутал! Ты {new_pronouns['address']}, а я тебя {old_pronouns['address']} называл! Извини, {new_pronouns['address']}! 😅",
+        f"Блять, {name}, я облажался! Ты {new_pronouns['address']}, а не {old_pronouns['address']}! Ну ладно, {new_pronouns['address']}, поехали дальше! 🤷‍♂️"
+    ]
+    return corrections[0]
 
-    def pick(category):
-        for it in wardrobe_items:
-            if it["category"] == category:
-                return it["name"]
-        return None
+def bati_ingredients_ask(name, gender):
+    pronouns = get_gender_pronoun(gender)
+    return f"Слушай, {name}, {pronouns['address']}, расскажи мне честно - что у тебя в холодильнике лежит? И в шкафчиках тоже посмотри! Напиши все продукты, какие есть, через запятую или просто списком. Я из этого добра что-то вкусное состряпаю! Ебать, какая вкуснятина получится! 🥘"
 
-    look = []
-    if temperature is not None:
-        if temperature <= 0:
-            look.append(pick("base") or "тёплый свитер")
-            look.append(pick("bottom") or "плотные брюки/джинсы")
-            look.append(pick("outerwear") or "пальто/пуховик")
-            look.append(pick("shoes") or "тёплая обувь")
-        elif temperature <= 12:
-            look.append(pick("base") or "лонгслив/свитшот")
-            look.append(pick("bottom") or "брюки/джинсы")
-            look.append(pick("outerwear") or "лёгкое пальто/тренч")
-            look.append(pick("shoes") or "закрытая обувь")
-        elif temperature <= 20:
-            look.append(pick("base") or "футболка/блуза")
-            look.append(pick("bottom") or "брюки/джинсы/юбка")
-            look.append(pick("shoes") or "кеды/туфли")
-        else:
-            look.append(pick("top") or "лёгкий топ")
-            look.append(pick("bottom") or "юбка/шорты/лёгкие брюки")
-            look.append(pick("shoes") or "сандалии/кеды")
+def bati_recipe_intro(name, gender, recipe_name):
+    pronouns = get_gender_pronoun(gender)
+    intros = [
+        f"Отлично, {name}, {pronouns['address']}! Я для тебя выбрал рецепт '{recipe_name}'. Это классика, проверенная временем! Ебать, какая вкуснятина будет! 👨‍🍳",
+        f"Слушай, {name}, {pronouns['address']}, '{recipe_name}' - это то, что нужно! Я сам так готовил еще в молодости! Блять, как же это вкусно! 🔥",
+        f"Ну что, {name}, {pronouns['address']}, готовим '{recipe_name}'? Это блюдо никогда не подводило! Ебать, пальчики оближешь! 😋"
+    ]
+    return intros[0]
 
-    if precip and precip > 0:
-        look.append("зонт/непромокаемая куртка")
-    if wind and wind > 8:
-        look.append("ветровка/защита от ветра")
+def bati_cooking_step(step_num, instruction, name, gender):
+    pronouns = get_gender_pronoun(gender)
+    step_intros = [
+        f"Шаг {step_num}, {name}, {pronouns['address']}:",
+        f"Слушай внимательно, {name}, {pronouns['address']}, шаг {step_num}:",
+        f"Теперь, {name}, {pronouns['address']}, делаем так - шаг {step_num}:",
+        f"Запоминай, {name}, {pronouns['address']}, шаг {step_num}:"
+    ]
+    return f"{step_intros[0]} {instruction}"
 
-    if destination_code in ("dest_work",):
-        look.append("аккуратный деловой акцент")
-    elif destination_code in ("dest_date",):
-        look.append("романтичная деталь образа")
-    elif destination_code in ("dest_party",):
-        look.append("яркий акцент/украшения")
-    elif destination_code in ("dest_sport",):
-        look.append("удобная спортивная посадка")
+def bati_encouragement(name, gender):
+    pronouns = get_gender_pronoun(gender)
+    encouragements = [
+        f"Молодец, {name}, {pronouns['address']}! У тебя получается! Ебать, какие у тебя руки золотые! 👍",
+        f"Так держать, {name}, {pronouns['address']}! Ты настоящий повар! Блять, как же ты быстро учишься! 👨‍🍳",
+        f"Отлично, {name}, {pronouns['address']}! Вижу, что руки растут откуда надо! Ебать, какой ты молодец! 🔥",
+        f"Красота, {name}, {pronouns['address']}! Учишься быстро! Блять, ты просто повар от бога! 😋"
+    ]
+    return encouragements[0]
 
-    mood_map = {
-        "mood_calm": "сдержанные оттенки",
-        "mood_energetic": "контраст/динамика",
-        "mood_romantic": "мягкие линии/пастель",
-        "mood_bold": "смелый акцент",
-        "mood_cozy": "уютные фактуры",
+def bati_no_ingredients(name, gender):
+    pronouns = get_gender_pronoun(gender)
+    return f"Блять, {name}, {pronouns['address']}, с такими продуктами особо не разгуляешься... Может, сходишь в магазин за мясом или овощами? Или закажешь доставку? А то из воздуха еду не сделаешь! 🛒"
+
+def bati_recipe_found(name, gender, count):
+    pronouns = get_gender_pronoun(gender)
+    return f"Ебать, {name}, {pronouns['address']}! Из твоих продуктов я могу приготовить {count} блюд! Смотри, что у меня получилось:"
+
+# --- Recipe database ---
+RECIPES = {
+    "паста_карбонара": {
+        "name": "Паста Карбонара",
+        "ingredients": ["макароны", "бекон", "яйца", "сыр_пармезан", "чеснок", "соль", "перец"],
+        "optional": ["лук"],
+        "instructions": [
+            "Поставь большую кастрюлю с подсоленной водой на огонь",
+            "Пока вода закипает, нарежь бекон мелкими кубиками",
+            "Натри сыр на мелкой терке",
+            "Взбей яйца с сыром, добавь соль и перец",
+            "Обжарь бекон на сковороде до хрустящего состояния",
+            "Добавь измельченный чеснок к бекону",
+            "Отвари макароны до состояния аль денте",
+            "Слей воду, оставив немного для соуса",
+            "Смешай горячие макароны с беконом",
+            "Сними с огня и добавь яично-сырную смесь, быстро перемешивая",
+            "Подавай сразу, посыпав пармезаном"
+        ]
+    },
+    "борщ": {
+        "name": "Борщ",
+        "ingredients": ["говядина", "свекла", "капуста", "морковь", "лук", "картофель", "томаты", "чеснок", "соль", "перец", "лавровый_лист"],
+        "optional": ["укроп", "сметана"],
+        "instructions": [
+            "Свари мясной бульон из говядины",
+            "Натри свеклу на крупной терке",
+            "Нарежь капусту соломкой",
+            "Нарежь картофель кубиками",
+            "Нарежь лук и морковь",
+            "Обжарь лук и морковь на растительном масле",
+            "Добавь к ним свеклу и томаты, туши 10 минут",
+            "Добавь овощи в кипящий бульон",
+            "Вари 20 минут, добавь картофель",
+            "Вари еще 15 минут, добавь капусту",
+            "Добавь соль, перец, лавровый лист",
+            "Вари еще 10 минут, добавь чеснок",
+            "Подавай со сметаной и укропом"
+        ]
+    },
+    "плов": {
+        "name": "Плов",
+        "ingredients": ["рис", "мясо", "морковь", "лук", "чеснок", "соль", "перец", "куркума", "растительное_масло"],
+        "optional": ["барбарис", "зира"],
+        "instructions": [
+            "Промой рис до чистой воды",
+            "Нарежь мясо кубиками",
+            "Нарежь лук полукольцами, морковь соломкой",
+            "Разогрей масло в казане или толстостенной кастрюле",
+            "Обжарь мясо до золотистой корочки",
+            "Добавь лук, обжарь до прозрачности",
+            "Добавь морковь, обжарь 5 минут",
+            "Добавь специи и соль",
+            "Добавь рис, разровняй",
+            "Залей горячей водой на 2 см выше риса",
+            "Добавь целые зубчики чеснока",
+            "Вари на сильном огне до выпаривания воды",
+            "Уменьши огонь, накрой крышкой, томи 20 минут",
+            "Перемешай и подавай"
+        ]
+    },
+    "салат_цезарь": {
+        "name": "Салат Цезарь",
+        "ingredients": ["салат", "курица", "сыр_пармезан", "хлеб", "чеснок", "майонез", "горчица", "соль", "перец"],
+        "optional": ["анчоусы", "каперсы"],
+        "instructions": [
+            "Нарежь хлеб кубиками и обжарь с чесноком",
+            "Отвари курицу и нарежь кубиками",
+            "Порви салат руками",
+            "Смешай майонез с горчицей и чесноком",
+            "Добавь соль и перец в соус",
+            "Смешай салат с курицей",
+            "Заправь соусом",
+            "Посыпь пармезаном и сухариками",
+            "Подавай сразу"
+        ]
+    },
+    "оладьи": {
+        "name": "Оладьи",
+        "ingredients": ["мука", "молоко", "яйца", "сахар", "соль", "дрожжи", "растительное_масло"],
+        "optional": ["ванилин"],
+        "instructions": [
+            "Подогрей молоко до теплого состояния",
+            "Раствори дрожжи в молоке с сахаром",
+            "Добавь яйца и соль",
+            "Постепенно добавь муку, размешивая",
+            "Замеси тесто до консистенции сметаны",
+            "Накрой полотенцем, дай подойти 30 минут",
+            "Разогрей масло на сковороде",
+            "Выкладывай тесто ложкой",
+            "Жарь с двух сторон до золотистого цвета",
+            "Подавай со сметаной или вареньем"
+        ]
     }
-    if mood_map.get(mood_code):
-        look.append(mood_map[mood_code])
+}
 
-    if traits:
-        archetype = traits.get("psych_q3")
-        if archetype == "Энергичная":
-            look.append("добавьте яркий цвет")
-        elif archetype == "Романтичная":
-            look.append("нежные аксессуары")
-        elif archetype == "Дерзкая":
-            look.append("смелая деталь (кожа/металл)")
-
-    acc = None
-    for it in wardrobe_items:
-        if it["category"] == "accessories":
-            acc = it["name"]
+def parse_ingredients(text):
+    """Парсит ингредиенты из свободного текста"""
+    # Нормализуем текст
+    text = text.lower().strip()
+    
+    # Убираем лишние символы
+    text = re.sub(r'[^\w\s,;]', ' ', text)
+    
+    # Разбиваем по разделителям
+    items = []
+    for separator in [',', ';', '\n']:
+        if separator in text:
+            items = [item.strip() for item in text.split(separator) if item.strip()]
             break
-    if acc:
-        look.append(acc)
+    
+    if not items:
+        items = text.split()
+    
+    # Нормализуем названия
+    normalized = []
+    for item in items:
+        item = item.strip()
+        if len(item) > 2:  # Игнорируем слишком короткие слова
+            # Простая нормализация
+            item = item.replace(' ', '_')
+            normalized.append(item)
+    
+    return normalized
 
-    items_text = ", ".join([p for p in look if p])
-    return f"Рекомендация: {items_text}."
+def find_matching_recipes(ingredients):
+    """Находит рецепты по имеющимся ингредиентам"""
+    matches = []
+    
+    for recipe_id, recipe in RECIPES.items():
+        required = set(recipe['ingredients'])
+        optional = set(recipe.get('optional', []))
+        available = set(ingredients)
+        
+        # Проверяем, сколько обязательных ингредиентов есть
+        missing_required = required - available
+        has_required = len(required - missing_required)
+        required_ratio = has_required / len(required)
+        
+        # Если есть хотя бы 70% обязательных ингредиентов
+        if required_ratio >= 0.7:
+            missing_optional = optional - available
+            matches.append({
+                'id': recipe_id,
+                'name': recipe['name'],
+                'missing_required': list(missing_required),
+                'missing_optional': list(missing_optional),
+                'score': required_ratio
+            })
+    
+    # Сортируем по количеству имеющихся ингредиентов
+    matches.sort(key=lambda x: x['score'], reverse=True)
+    return matches
 
+def get_recipe_instructions(recipe_id, name, gender):
+    """Возвращает пошаговые инструкции для рецепта"""
+    if recipe_id not in RECIPES:
+        return []
+    
+    recipe = RECIPES[recipe_id]
+    instructions = []
+    
+    for i, step in enumerate(recipe['instructions'], 1):
+        instructions.append(bati_cooking_step(i, step, name, gender))
+    
+    return instructions
+
+# --- Conversation flows ---
+def start_cooking_flow(chat_id, user_id, name, gender):
+    """Начинает кулинарный диалог"""
+    save_session(user_id, "ask_ingredients", {"name": name, "gender": gender})
+    greeting = bati_greeting(name, gender)
+    ingredients_ask = bati_ingredients_ask(name, gender)
+    
+    send_message(chat_id, greeting)
+    send_message(chat_id, ingredients_ask)
+
+def handle_ingredients(chat_id, user_id, text, name, gender):
+    """Обрабатывает список ингредиентов"""
+    ingredients = parse_ingredients(text)
+    
+    if not ingredients:
+        pronouns = get_gender_pronoun(gender)
+        send_message(chat_id, f"Слушай, {name}, {pronouns['address']}, я ничего не понял! Напиши нормально, что у тебя есть из продуктов! Блять, как же я тебя пойму? 😅")
+        return
+    
+    # Сохраняем ингредиенты
+    save_session(user_id, "show_recipes", {"ingredients": ingredients, "name": name, "gender": gender})
+    
+    # Ищем подходящие рецепты
+    matches = find_matching_recipes(ingredients)
+    
+    if not matches:
+        send_message(chat_id, bati_no_ingredients(name, gender))
+        return
+    
+    # Показываем рецепты
+    send_message(chat_id, bati_recipe_found(name, gender, len(matches)))
+    
+    recipe_options = []
+    for i, match in enumerate(matches[:5]):  # Показываем максимум 5 рецептов
+        missing_text = ""
+        if match['missing_required']:
+            missing_text = f" (нужно докупить: {', '.join(match['missing_required'])})"
+        recipe_options.append((f"{match['name']}{missing_text}", f"recipe_{match['id']}"))
+    
+    keyboard = build_inline_keyboard(recipe_options)
+    send_message(chat_id, "Выбирай, что будем готовить:", reply_markup=keyboard)
+
+def handle_recipe_selection(chat_id, user_id, recipe_id, name, gender):
+    """Обрабатывает выбор рецепта"""
+    if recipe_id not in RECIPES:
+        send_message(chat_id, "Блять, что-то пошло не так... Попробуй еще раз!")
+        return
+    
+    recipe = RECIPES[recipe_id]
+    save_session(user_id, "cooking", {"recipe_id": recipe_id, "name": name, "gender": gender, "step": 0})
+    
+    intro = bati_recipe_intro(name, gender, recipe['name'])
+    send_message(chat_id, intro)
+    
+    # Показываем ингредиенты
+    ingredients_text = f"Ингредиенты:\n• {', '.join(recipe['ingredients'])}"
+    if recipe.get('optional'):
+        ingredients_text += f"\n• Дополнительно: {', '.join(recipe['optional'])}"
+    
+    send_message(chat_id, ingredients_text)
+    
+    # Начинаем готовку
+    instructions = get_recipe_instructions(recipe_id, name, gender)
+    if instructions:
+        send_message(chat_id, "Ну что, начинаем готовить! Ебать, какая вкуснятина будет! 🔥")
+        send_message(chat_id, instructions[0])
+
+def handle_cooking_step(chat_id, user_id, name, gender):
+    """Обрабатывает следующий шаг готовки"""
+    session = get_session(user_id)
+    if not session or session['stage'] != 'cooking':
+        return
+    
+    recipe_id = session['data']['recipe_id']
+    current_step = session['data'].get('step', 0)
+    
+    instructions = get_recipe_instructions(recipe_id, name, gender)
+    
+    if current_step + 1 < len(instructions):
+        next_step = current_step + 1
+        save_session(user_id, "cooking", {**session['data'], "step": next_step})
+        
+        send_message(chat_id, instructions[next_step])
+        
+        if next_step == len(instructions) - 1:
+            # Последний шаг
+            pronouns = get_gender_pronoun(gender)
+            send_message(chat_id, f"Готово, {name}, {pronouns['address']}! Ебать, какая вкуснятина получилась! Приятного аппетита! 🍽️")
+            send_message(chat_id, "Хочешь приготовить что-то еще? Напиши /start")
+    else:
+        # Готовка завершена
+        pronouns = get_gender_pronoun(gender)
+        send_message(chat_id, f"Отлично, {name}, {pronouns['address']}! Блюдо готово! Ебать, как же это вкусно! Приятного аппетита! 🍽️")
+        send_message(chat_id, "Хочешь приготовить что-то еще? Напиши /start")
 
 # --- Health check ---
 @app.route("/", methods=["GET"])
 def health_check():
-    return "Wardrobe Bot is running! 🌸", 200
+    return "Cooking Bot is running! 👨‍🍳", 200
 
 @app.route("/health", methods=["GET"])
 def health():
-    return {"status": "ok", "bot": "wardrobe-consultant"}, 200
+    return {"status": "ok", "bot": "cooking-mentor"}, 200
 
 # --- Webhook ---
 @app.route("/webhook", methods=["POST"])
@@ -509,34 +586,24 @@ def telegram_webhook():
                 processed_callback_ids.add(callback_id)
                 answer_callback_query(callback_id)
 
-            if action and action.startswith("psych|"):
-                _, key, value = action.split("|", 2)
-                continue_psych_flow(chat_id, user_id, key, value)
+            if action and action.startswith("recipe_"):
+                recipe_id = action.replace("recipe_", "")
+                session = get_session(user_id)
+                if session:
+                    name = session['data'].get('name', 'детка')
+                    gender = session['data'].get('gender', 'unknown')
+                    handle_recipe_selection(chat_id, user_id, recipe_id, name, gender)
                 return "OK", 200
 
-            if action and (action.startswith("dest_") or action.startswith("mood_")):
-                sess = get_session(user_id)
-                if not sess:
-                    save_session(user_id, "ask_city", {"flow": "style_today"})
-                    send_message(chat_id, "Введите город")
-                    return "OK", 200
-                data_s = sess.get("data", {})
-                if action.startswith("dest_"):
-                    data_s["destination"] = action
-                    save_session(user_id, "ask_mood", data_s)
-                    send_message(chat_id, "Какое у вас настроение?", reply_markup=build_inline_keyboard(MOOD_OPTIONS))
-                    return "OK", 200
-                if action.startswith("mood_"):
-                    data_s["mood"] = action
-                    traits = get_profile(user_id) or {}
-                    wardrobe = get_wardrobe(user_id)
-                    weather = data_s.get("weather")
-                    rec = outfit_recommendation(traits, wardrobe, weather, data_s.get("destination"), data_s.get("mood"))
-                    save_session(user_id, "idle", {})
-                    send_message(chat_id, f"Погода: {pretty_weather(weather)}\n\n{rec}")
-                    return "OK", 200
+            if action == "next_step":
+                session = get_session(user_id)
+                if session:
+                    name = session['data'].get('name', 'детка')
+                    gender = session['data'].get('gender', 'unknown')
+                    handle_cooking_step(chat_id, user_id, name, gender)
+                return "OK", 200
 
-            send_message(chat_id, "Неизвестное действие")
+            send_message(chat_id, "Что-то пошло не так... Попробуй еще раз!")
             return "OK", 200
 
         if "message" not in data:
@@ -546,6 +613,7 @@ def telegram_webhook():
         user = msg.get("from", {})
         user_id = user.get("id")
 
+        # Dedup
         msg_hash = get_message_hash(msg)
         if msg_hash in processed_messages:
             return "OK", 200
@@ -555,48 +623,96 @@ def telegram_webhook():
 
         if "text" in msg:
             text = msg["text"].strip()
+            
             if text == "/start":
-                send_message(chat_id, WELCOME, reply_markup=main_keyboard())
-                profile = get_profile(user_id)
-                if not profile:
-                    start_psych_flow(chat_id, user_id)
+                # Сбрасываем сессию
+                save_session(user_id, "ask_name", {})
+                send_message(chat_id, bati_name_ask())
                 return "OK", 200
 
-            if text == "🧠 Пройти опрос профиля":
-                start_psych_flow(chat_id, user_id)
-                return "OK", 200
-
-            if text == "👗 Заполнить гардероб":
-                start_wardrobe_flow(chat_id, user_id)
-                return "OK", 200
-
-            if text == "🌤️ Что сегодня надеть?":
-                start_style_today_flow(chat_id, user_id)
-                return "OK", 200
-
-            sess = get_session(user_id)
-            if sess:
-                if sess["stage"].startswith("wardrobe_cat_"):
-                    continue_wardrobe_flow(chat_id, user_id, text)
+            # Обработка имени
+            session = get_session(user_id)
+            if session and session['stage'] == 'ask_name':
+                name = text.strip()
+                if len(name) < 2:
+                    send_message(chat_id, "Блять, да нормальное имя скажи! Не меньше двух букв! 😤")
                     return "OK", 200
-                if sess["stage"] == "ask_city":
-                    place = geocode_city(text)
-                    if not place:
-                        send_message(chat_id, "Не нашла город. Повторите, например: Санкт-Петербург")
+                
+                # Определяем пол по имени
+                gender = detect_gender_by_name(name)
+                if gender == "unknown":
+                    gender = "male"  # По умолчанию
+                
+                # Сохраняем пользователя
+                upsert_user(user_id, user.get("username"), gender)
+                save_session(user_id, "ask_ingredients", {"name": name, "gender": gender})
+                
+                # Приветствуем
+                greeting = bati_greeting(name, gender)
+                ingredients_ask = bati_ingredients_ask(name, gender)
+                
+                send_message(chat_id, greeting)
+                send_message(chat_id, ingredients_ask)
+                return "OK", 200
+
+            # Проверка на поправку пола
+            gender_correction = detect_gender_correction(text)
+            if gender_correction:
+                session = get_session(user_id)
+                if session and session['data'].get('name'):
+                    name = session['data']['name']
+                    old_gender = session['data'].get('gender', 'unknown')
+                    
+                    if old_gender != gender_correction:
+                        # Обновляем пол
+                        upsert_user(user_id, user.get("username"), gender_correction)
+                        save_session(user_id, session['stage'], {**session['data'], "gender": gender_correction})
+                        
+                        correction_msg = bati_gender_correction(name, old_gender, gender_correction)
+                        send_message(chat_id, correction_msg)
                         return "OK", 200
-                    w = get_current_weather(place["lat"], place["lon"])
-                    data_s = sess.get("data", {})
-                    data_s.update({"city": place["name"], "lat": place["lat"], "lon": place["lon"], "weather": w})
-                    save_session(user_id, "ask_dest", data_s)
-                    send_message(chat_id, f"Погода в {place['name']}: {pretty_weather(w)}")
-                    send_message(chat_id, "Куда вы направляетесь?", reply_markup=build_inline_keyboard(DESTINATION_OPTIONS))
+
+            # Обработка ингредиентов
+            if session and session['stage'] == 'ask_ingredients':
+                name = session['data'].get('name', 'детка')
+                gender = session['data'].get('gender', 'unknown')
+                handle_ingredients(chat_id, user_id, text, name, gender)
+                return "OK", 200
+
+            # Обработка шагов готовки
+            if session and session['stage'] == 'cooking':
+                if text.lower() in ['далее', 'дальше', 'следующий шаг', 'готово', 'ок', 'ok', 'да', 'продолжаем']:
+                    name = session['data'].get('name', 'детка')
+                    gender = session['data'].get('gender', 'unknown')
+                    handle_cooking_step(chat_id, user_id, name, gender)
                     return "OK", 200
+
+            # Общие ответы
+            if any(word in text.lower() for word in ['спасибо', 'благодарю', 'отлично', 'круто']):
+                session = get_session(user_id)
+                if session and session['data'].get('name'):
+                    name = session['data']['name']
+                    gender = session['data'].get('gender', 'unknown')
+                    pronouns = get_gender_pronoun(gender)
+                    send_message(chat_id, f"Пожалуйста, {name}, {pronouns['address']}! Ебать, какой ты вежливый! Рад помочь! 😊")
+                else:
+                    send_message(chat_id, "Пожалуйста! Ебать, какой ты вежливый! Рад помочь! 😊")
+                return "OK", 200
+
+            # Если ничего не подошло
+            session = get_session(user_id)
+            if session and session['data'].get('name'):
+                name = session['data']['name']
+                gender = session['data'].get('gender', 'unknown')
+                pronouns = get_gender_pronoun(gender)
+                send_message(chat_id, f"Слушай, {name}, {pronouns['address']}, я не совсем понял. Напиши /start, чтобы начать готовить! Блять, как же я тебя пойму? 👨‍🍳")
+            else:
+                send_message(chat_id, "Напиши /start, чтобы начать готовить! Блять, как же я тебя пойму? 👨‍🍳")
 
         return "OK", 200
     except Exception:
         logger.exception("Критическая ошибка webhook")
-        return "OK", 200
-
+    return "OK", 200
 
 def set_webhook():
     try:
@@ -610,9 +726,8 @@ def set_webhook():
     except Exception:
         logger.exception("Ошибка установки webhook")
 
-
 if __name__ == "__main__":
-    logger.info("🚀 Запуск гардероб-бота...")
+    logger.info("🚀 Запуск кулинарного бота...")
     
     # Initialize database
     try:
@@ -628,7 +743,7 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"❌ Ошибка установки webhook: {e}")
         # Don't exit, continue without webhook for testing
-    
+
     # Get port from environment (Render sets this)
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"🌐 Запуск сервера на порту {port}")

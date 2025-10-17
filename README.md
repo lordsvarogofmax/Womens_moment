@@ -1,17 +1,67 @@
-# Wardrobe Consulting Telegram Bot 🌸
+# Кулинарный Бот-Наставник 👨‍🍳
 
-A Telegram bot that helps women choose outfits based on weather, mood, psychological profile, and wardrobe inventory.
+Telegram-бот, который отыгрывает роль сурового повара-бати из 90-х, помогающего готовить вкусные блюда. Матершинник, но с золотым сердцем! 😄
 
-## Features
+## Особенности
 
-- **Psychological Profile Survey**: One-time questionnaire to understand personal style preferences
-- **Wardrobe Inventory**: Track clothing items by categories (basics, tops, bottoms, shoes, outerwear, accessories)
-- **Weather Integration**: Real-time weather data from Open-Meteo API
-- **Smart Recommendations**: AI-powered outfit suggestions based on:
-  - Current weather conditions
-  - Destination (work, date, party, etc.)
-  - Mood and psychological profile
-  - Available wardrobe items
+- **Аутентичная личность**: Суровый батя из 90-х с матом и характерными выражениями
+- **Умное определение пола**: Определяет пол по имени, корректирует при поправке
+- **Персонализация**: Обращается по имени и правильно (сынок/дочка)
+- **Умный парсинг**: Понимает ингредиенты в свободной форме
+- **Подбор рецептов**: Находит подходящие блюда по имеющимся продуктам
+- **Пошаговые инструкции**: Детальные рецепты с матерными комментариями
+- **Советы по покупкам**: Подсказывает, что нужно докупить
+
+## База рецептов
+
+- **Паста Карбонара** - классическая итальянская паста
+- **Борщ** - традиционный русский суп
+- **Плов** - восточное блюдо из риса и мяса
+- **Салат Цезарь** - популярный салат с курицей
+- **Оладьи** - русские блины
+
+## Как работает
+
+1. **Приветствие**: Бот спрашивает имя пользователя
+2. **Определение пола**: Автоматически определяет пол по имени
+3. **Сбор ингредиентов**: Пользователь пишет, что есть дома
+4. **Подбор рецептов**: Бот находит подходящие блюда
+5. **Выбор блюда**: Пользователь выбирает из предложенных вариантов
+6. **Готовка**: Пошаговые инструкции с матерными комментариями
+
+## Примеры диалогов
+
+### Начало
+```
+Бот: Блять, кто это тут у меня? Назови свое имя, а то я не знаю, как к тебе обращаться! 😤
+Пользователь: Аня
+Бот: А, Аня! Ну что, дочка, готов(а) к кулинарным подвигам? Я тебе сейчас такое блюдо покажу, что ебать! 🔥
+```
+
+### Поправка пола
+```
+Пользователь: я мальчик
+Бот: А, блять, Аня! Извини, дочка, я думал ты дочка, а ты сынок! Ну ладно, сынок, продолжаем! 😅
+```
+
+### Сбор ингредиентов
+```
+Бот: Слушай, Аня, сынок, расскажи мне честно - что у тебя в холодильнике лежит? И в шкафчиках тоже посмотри! Напиши все продукты, какие есть, через запятую или просто списком. Я из этого добра что-то вкусное состряпаю! Ебать, какая вкуснятина получится! 🥘
+Пользователь: макароны, яйца, бекон, сыр, лук
+```
+
+### Подбор рецептов
+```
+Бот: Ебать, Аня, сынок! Из твоих продуктов я могу приготовить 1 блюд! Смотри, что у меня получилось:
+- Паста Карбонара (нужно докупить: чеснок, соль, перец)
+```
+
+### Готовка
+```
+Бот: Отлично, Аня, сынок! Я для тебя выбрал рецепт 'Паста Карбонара'. Это классика, проверенная временем! Ебать, какая вкуснятина будет! 👨‍🍳
+
+Шаг 1, Аня, сынок: Поставь большую кастрюлю с подсоленной водой на огонь
+```
 
 ## Setup for Render.com (Docker)
 
@@ -37,20 +87,10 @@ WEBHOOK_URL=https://your-app-name.onrender.com/webhook
 
 Replace `your-app-name` with your actual Render app name.
 
-### 4. Docker Configuration
-The project includes:
-- **Dockerfile**: Optimized for production with security best practices
-- **.dockerignore**: Excludes unnecessary files from Docker build
-- **Health checks**: Built-in container health monitoring
-- **Non-root user**: Runs securely without root privileges
-
 ### 4. Test the Bot
 1. Find your bot on Telegram using the username you created
 2. Send `/start` to begin
-3. Follow the setup flow:
-   - Complete psychological profile survey
-   - Add items to your wardrobe
-   - Get outfit recommendations!
+3. Follow the cooking flow!
 
 ## Local Development
 
@@ -68,53 +108,60 @@ The project includes:
 1. Clone the repository
 2. Build Docker image:
    ```bash
-   docker build -t wardrobe-bot .
+   docker build -t cooking-bot .
    ```
 3. Run container:
    ```bash
    docker run -p 10000:10000 \
      -e BOT_TOKEN="your_bot_token" \
      -e WEBHOOK_URL="https://your-ngrok-url.ngrok.io/webhook" \
-     wardrobe-bot
+     cooking-bot
    ```
-4. Test: Visit `http://localhost:10000` - should show "Wardrobe Bot is running! 🌸"
+4. Test: Visit `http://localhost:10000` - should show "Cooking Bot is running! 👨‍🍳"
 
 ## Bot Commands
 
 - `/start` - Begin or restart the bot
-- **🧠 Пройти опрос профиля** - Complete psychological profile
-- **👗 Заполнить гардероб** - Add items to wardrobe
-- **🌤️ Что сегодня надеть?** - Get outfit recommendation
+- **Имя** - Tell your name (bot determines gender automatically)
+- **я мальчик/девочка/мужчина/женщина** - Correct gender if bot was wrong
+- **далее/дальше/готово/продолжаем** - Next cooking step
+- **спасибо** - Thank the bot
 
-## How It Works
+## Personality Features
 
-1. **Profile Setup**: Users complete a 3-question psychological survey
-2. **Wardrobe Building**: Users add clothing items by category
-3. **Daily Recommendations**: 
-   - Enter city for weather data
-   - Select destination (work, date, party, etc.)
-   - Choose mood
-   - Receive personalized outfit suggestions
+### Character Traits
+- **Суровый батя**: Матершинник из 90-х с золотым сердцем
+- **Опытный повар**: Знает множество рецептов
+- **Заботливый отец**: Обращается по имени и правильно (сынок/дочка)
+- **Умный**: Определяет пол по имени, корректирует при поправке
+- **Поощряющий**: Подбадривает во время готовки
 
-## API Dependencies
-
-- **Open-Meteo**: Free weather API for current conditions
-- **Telegram Bot API**: For bot functionality
-- **SQLite**: Local database for user data
+### Speech Patterns
+- "Блять, кто это тут у меня?"
+- "Слушай, [имя], [сынок/дочка]..."
+- "Ебать, какая вкуснятина будет!"
+- "Пальчики оближешь!"
+- "Руки растут откуда надо!"
+- "Классика, проверенная временем!"
+- "Блять, какой ты молодец!"
 
 ## Database Schema
 
-- `users` - User information
-- `profiles` - Psychological profiles
-- `wardrobe_items` - Clothing inventory
-- `sessions` - Conversation state
+- `users` - User information (gender, username)
+- `cooking_sessions` - Current cooking session state
+
+## API Dependencies
+
+- **Telegram Bot API**: For bot functionality
+- **SQLite**: Local database for user data
+- **Flask**: Web framework for webhook handling
 
 ## Free Tier Optimizations
 
 - Minimal dependencies (Flask + requests only)
 - Lightweight Docker image
 - Efficient database queries
-- No external AI services (rule-based recommendations)
+- No external AI services (rule-based recipe matching)
 
 ## Troubleshooting
 
@@ -123,10 +170,10 @@ The project includes:
 - Verify `WEBHOOK_URL` includes your full Render URL + `/webhook`
 - Check Render logs for errors
 
-### Weather not loading
-- Ensure city name is spelled correctly
-- Check internet connectivity
-- Open-Meteo API is free but has rate limits
+### Recipe not found
+- Make sure you have enough ingredients
+- Try different ingredient names
+- Check spelling
 
 ### Database issues
 - Database is automatically created on first run
@@ -143,4 +190,4 @@ If you encounter issues:
 
 ---
 
-Made with ❤️ for helping women feel confident in their style choices!
+Приятного аппетита! 🍽️
