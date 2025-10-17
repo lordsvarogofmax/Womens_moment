@@ -138,9 +138,16 @@ def send_message(chat_id, text, reply_markup=None):
         data = {"chat_id": chat_id, "text": text}
         if reply_markup:
             data["reply_markup"] = reply_markup
-        requests.post(url, json=data, timeout=10)
-    except Exception:
-        logger.exception("Ошибка отправки сообщения")
+        
+        logger.info(f"📤 Отправляем сообщение в чат {chat_id}: {text[:50]}...")
+        response = requests.post(url, json=data, timeout=10)
+        
+        if not response.ok:
+            logger.error(f"❌ Ошибка отправки сообщения: {response.status_code} - {response.text}")
+        else:
+            logger.info(f"✅ Сообщение отправлено успешно")
+    except Exception as e:
+        logger.exception(f"💥 Ошибка отправки сообщения: {e}")
 
 def answer_callback_query(callback_query_id, text=None):
     try:
@@ -391,32 +398,37 @@ RECIPES = {
 
 def parse_ingredients(text):
     """Парсит ингредиенты из свободного текста"""
-    # Нормализуем текст
-    text = text.lower().strip()
-    
-    # Убираем лишние символы
-    text = re.sub(r'[^\w\s,;]', ' ', text)
-    
-    # Разбиваем по разделителям
-    items = []
-    for separator in [',', ';', '\n']:
-        if separator in text:
-            items = [item.strip() for item in text.split(separator) if item.strip()]
-            break
-    
-    if not items:
-        items = text.split()
-    
-    # Нормализуем названия
-    normalized = []
-    for item in items:
-        item = item.strip()
-        if len(item) > 2:  # Игнорируем слишком короткие слова
-            # Простая нормализация
-            item = item.replace(' ', '_')
-            normalized.append(item)
-    
-    return normalized
+    try:
+        # Нормализуем текст
+        text = text.lower().strip()
+        
+        # Убираем лишние символы
+        text = re.sub(r'[^\w\s,;]', ' ', text)
+        
+        # Разбиваем по разделителям
+        items = []
+        for separator in [',', ';', '\n']:
+            if separator in text:
+                items = [item.strip() for item in text.split(separator) if item.strip()]
+                break
+        
+        if not items:
+            items = text.split()
+        
+        # Нормализуем названия
+        normalized = []
+        for item in items:
+            item = item.strip()
+            if len(item) > 2:  # Игнорируем слишком короткие слова
+                # Простая нормализация
+                item = item.replace(' ', '_')
+                normalized.append(item)
+        
+        logger.info(f"🔍 Парсинг ингредиентов: '{text}' -> {normalized}")
+        return normalized
+    except Exception as e:
+        logger.exception(f"💥 Ошибка парсинга ингредиентов: {e}")
+        return []
 
 def find_matching_recipes(ingredients):
     """Находит рецепты по имеющимся ингредиентам"""
@@ -472,35 +484,42 @@ def start_cooking_flow(chat_id, user_id, name, gender):
 
 def handle_ingredients(chat_id, user_id, text, name, gender):
     """Обрабатывает список ингредиентов"""
-    ingredients = parse_ingredients(text)
-    
-    if not ingredients:
-        pronouns = get_gender_pronoun(gender)
-        send_message(chat_id, f"Слушай, {name}, {pronouns['address']}, я ничего не понял! Напиши нормально, что у тебя есть из продуктов! Блять, как же я тебя пойму? 😅")
-        return
-    
-    # Сохраняем ингредиенты
-    save_session(user_id, "show_recipes", {"ingredients": ingredients, "name": name, "gender": gender})
-    
-    # Ищем подходящие рецепты
-    matches = find_matching_recipes(ingredients)
-    
-    if not matches:
-        send_message(chat_id, bati_no_ingredients(name, gender))
-        return
-    
-    # Показываем рецепты
-    send_message(chat_id, bati_recipe_found(name, gender, len(matches)))
-    
-    recipe_options = []
-    for i, match in enumerate(matches[:5]):  # Показываем максимум 5 рецептов
-        missing_text = ""
-        if match['missing_required']:
-            missing_text = f" (нужно докупить: {', '.join(match['missing_required'])})"
-        recipe_options.append((f"{match['name']}{missing_text}", f"recipe_{match['id']}"))
-    
-    keyboard = build_inline_keyboard(recipe_options)
-    send_message(chat_id, "Выбирай, что будем готовить:", reply_markup=keyboard)
+    try:
+        logger.info(f"🔍 Обрабатываем ингредиенты от {name}: {text}")
+        ingredients = parse_ingredients(text)
+        logger.info(f"📋 Распознанные ингредиенты: {ingredients}")
+        
+        if not ingredients:
+            pronouns = get_gender_pronoun(gender)
+            send_message(chat_id, f"Слушай, {name}, {pronouns['address']}, я ничего не понял! Напиши нормально, что у тебя есть из продуктов! Блять, как же я тебя пойму? 😅")
+            return
+        
+        # Сохраняем ингредиенты
+        save_session(user_id, "show_recipes", {"ingredients": ingredients, "name": name, "gender": gender})
+        
+        # Ищем подходящие рецепты
+        matches = find_matching_recipes(ingredients)
+        logger.info(f"🍳 Найдено рецептов: {len(matches)}")
+        
+        if not matches:
+            send_message(chat_id, bati_no_ingredients(name, gender))
+            return
+        
+        # Показываем рецепты
+        send_message(chat_id, bati_recipe_found(name, gender, len(matches)))
+        
+        recipe_options = []
+        for i, match in enumerate(matches[:5]):  # Показываем максимум 5 рецептов
+            missing_text = ""
+            if match['missing_required']:
+                missing_text = f" (нужно докупить: {', '.join(match['missing_required'])})"
+            recipe_options.append((f"{match['name']}{missing_text}", f"recipe_{match['id']}"))
+        
+        keyboard = build_inline_keyboard(recipe_options)
+        send_message(chat_id, "Выбирай, что будем готовить:", reply_markup=keyboard)
+    except Exception as e:
+        logger.exception(f"💥 Ошибка обработки ингредиентов: {e}")
+        send_message(chat_id, "Блять, что-то пошло не так! Попробуй еще раз!")
 
 def handle_recipe_selection(chat_id, user_id, recipe_id, name, gender):
     """Обрабатывает выбор рецепта"""
@@ -569,7 +588,9 @@ def health():
 def telegram_webhook():
     try:
         data = request.get_json()
+        logger.info(f"📨 Получен webhook: {data}")
         if not data:
+            logger.info("❌ Пустой webhook")
             return "OK", 200
 
         if "callback_query" in data:
@@ -607,15 +628,19 @@ def telegram_webhook():
             return "OK", 200
 
         if "message" not in data:
+            logger.info("❌ Нет сообщения в данных")
             return "OK", 200
         msg = data["message"]
         chat_id = msg["chat"]["id"]
         user = msg.get("from", {})
         user_id = user.get("id")
+        
+        logger.info(f"📝 Обрабатываем сообщение от пользователя {user_id} в чате {chat_id}")
 
         # Dedup
         msg_hash = get_message_hash(msg)
         if msg_hash in processed_messages:
+            logger.info(f"🔄 Пропускаем дублирующееся сообщение")
             return "OK", 200
         processed_messages.add(msg_hash)
 
@@ -623,8 +648,10 @@ def telegram_webhook():
 
         if "text" in msg:
             text = msg["text"].strip()
+            logger.info(f"📝 Текстовое сообщение: '{text}'")
             
             if text == "/start":
+                logger.info("🚀 Обработка команды /start")
                 # Сбрасываем сессию
                 save_session(user_id, "ask_name", {})
                 send_message(chat_id, bati_name_ask())
@@ -710,9 +737,9 @@ def telegram_webhook():
                 send_message(chat_id, "Напиши /start, чтобы начать готовить! Блять, как же я тебя пойму? 👨‍🍳")
 
         return "OK", 200
-    except Exception:
-        logger.exception("Критическая ошибка webhook")
-    return "OK", 200
+    except Exception as e:
+        logger.exception(f"💥 Критическая ошибка webhook: {e}")
+        return "OK", 200
 
 def set_webhook():
     try:
@@ -727,7 +754,7 @@ def set_webhook():
         logger.exception("Ошибка установки webhook")
 
 if __name__ == "__main__":
-    logger.info("🚀 Запуск кулинарного бота...")
+    logger.info("🚀 Запуск кулинарного бота-бати...")
     
     # Initialize database
     try:

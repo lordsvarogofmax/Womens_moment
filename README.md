@@ -169,16 +169,29 @@ Replace `your-app-name` with your actual Render app name.
 - Check that `BOT_TOKEN` is set correctly
 - Verify `WEBHOOK_URL` includes your full Render URL + `/webhook`
 - Check Render logs for errors
+- Look for detailed logs with emojis (📨, 📝, 🔍, etc.)
 
 ### Recipe not found
 - Make sure you have enough ingredients
 - Try different ingredient names
 - Check spelling
+- Use common ingredient names (макароны, мясо, овощи)
 
 ### Database issues
 - Database is automatically created on first run
 - Data persists between deployments on Render
 - No manual setup required
+
+### Testing locally
+Run the test script to check basic functionality:
+```bash
+python test_bot.py
+```
+
+### Common issues
+- **"Блять, кто это тут у меня?"** - Bot is working, just asking for name
+- **"Я ничего не понял!"** - Try simpler ingredient names
+- **Webhook errors** - Check that your Render URL is accessible
 
 ## Support
 
